@@ -1,16 +1,15 @@
 package starknet
 
 import (
-	"encoding/base64"
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/nextdotid/proof_server/types"
 	"github.com/nextdotid/proof_server/util"
-	mycrypto "github.com/nextdotid/proof_server/util/crypto"
 	"github.com/nextdotid/proof_server/validator"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
@@ -21,8 +20,12 @@ type Starknet struct {
 }
 
 const (
-	VALIDATE_TEMPLATE = `^{"starknet_address":"0x([0-9a-fA-F]{40})","signature":"(.*)"}$`
+	//64 characters for Starknet addresses instead of 40 for ETH
+	VALIDATE_TEMPLATE = `^{"starknet_address":"0x([0-9a-fA-F]{64})","signature":"(.*)"}$`
 )
+
+const VALID_SIGN_ENTRYPOINT = "0x213dfe25e2ca309c4d615a09cfc95fdb2fc7dc73fbcad12c450fe93b1f2ff9e"
+const CALL_CONTRACT_URL = "https://alpha4.starknet.io/feeder_gateway/call_contract"
 
 var (
 	l  = logrus.WithFields(logrus.Fields{"module": "validator", "validator": "starknet"})
@@ -33,26 +36,27 @@ func Init() {
 	if validator.PlatformFactories == nil {
 		validator.PlatformFactories = make(map[types.Platform]func(*validator.Base) validator.IValidator)
 	}
-	validator.PlatformFactories[types.Platforms.Ethereum] = func(base *validator.Base) validator.IValidator {
+	validator.PlatformFactories[types.Platforms.Starknet] = func(base *validator.Base) validator.IValidator {
 		stark := Starknet{base}
 		return &stark
 	}
 }
 
-// Not used by etheruem (for now).
+// Not used by Starknet (for now).
 func (*Starknet) GeneratePostPayload() (post map[string]string) {
 	return map[string]string{"default": ""}
 }
 
 func (st *Starknet) GenerateSignPayload() (payload string) {
 	payloadStruct := validator.H{
-		"action":     string(st.Action),
-		"identity":   strings.ToLower(st.Identity),
-		"persona":    "0x" + mycrypto.CompressedPubkeyHex(st.Pubkey),
-		"platform":   "starknet",
-		"prev":       nil,
-		"created_at": util.TimeToTimestampString(st.CreatedAt),
-		"uuid":       st.Uuid.String(),
+		"action":           string(st.Action),
+		"identity":         strings.ToLower(st.Identity),
+		"platform":         "starknet",
+		"prev":             nil,
+		"created_at":       util.TimeToTimestampString(st.CreatedAt),
+		"uuid":             st.Uuid.String(),
+		"Extra":            st.Extra,
+		"SignaturePayload": st.SignaturePayload,
 	}
 	if st.Previous != "" {
 		payloadStruct["prev"] = st.Previous
@@ -62,86 +66,94 @@ func (st *Starknet) GenerateSignPayload() (payload string) {
 		l.Warnf("Error when marshaling struct: %s", err.Error())
 		return ""
 	}
+
 	return string(payloadBytes)
 }
 
-// Both persona-signed and wallelt-signed request are vaild.
-func (et *Starknet) Validate() (err error) {
-	et.SignaturePayload = et.GenerateSignPayload()
-	et.Identity = strings.ToLower(et.Identity)
-	et.AltID = et.Identity
+// Only wallet-signed request are vaild.
+func (st *Starknet) Validate() (err error) {
+	st.Identity = strings.ToLower(st.Identity)
+	st.AltID = st.Identity
 
-	switch et.Action {
+	switch st.Action {
 	case types.Actions.Create:
 		{
-			return et.validateCreate()
+			return st.validateCreate()
 		}
 	case types.Actions.Delete:
 		{
-			return et.validateDelete()
+			return st.validateDelete()
 		}
 	default:
 		{
-			return xerrors.Errorf("unknown action: %s", et.Action)
+			return xerrors.Errorf("unknown action: %s", st.Action)
 		}
 	}
 }
 
-func (et *Starknet) validateCreate() (err error) {
-	// ETH wallet signature
-	wallet_sig, ok := et.Extra["wallet_signature"]
+func (st *Starknet) validateCreate() (err error) {
+	// Starknet wallet signature
+	wallet_sig, ok := st.Extra["wallet_signature"]
 	if !ok {
 		return xerrors.Errorf("wallet_signature not found")
 	}
-	sig_bytes, err := base64.StdEncoding.DecodeString(wallet_sig)
-	if err != nil {
-		return xerrors.Errorf("error when decoding sig: %w", err)
-	}
-	if err := validateEthSignature(sig_bytes, et.GenerateSignPayload(), et.Identity); err != nil {
+
+	if err := validateStarkSignature(wallet_sig, st.SignaturePayload, st.Identity); err != nil {
 		return xerrors.Errorf("%w", err)
 	}
 
-	// Persona signature
-	return mycrypto.ValidatePersonalSignature(et.GenerateSignPayload(), et.Signature, et.Pubkey)
+	return err
 }
 
-// `address` should be hexstring, `sig` should be BASE64-ed string.
-func validateEthSignature(sig_bytes []byte, payload, address string) error {
-	address_given := common.HexToAddress(address)
+// `address` should be hexstring, `sig` should be a string of signature parts joined with || to be separated before passing as calldata
+// `payload_hash` is the pedersen hash of the payload data used to generate the signature which also includes a prefix to differentiate between
+// messages and transactions.
+func validateStarkSignature(sig string, payload_hash, address string) error {
+	address_given := address
 
-	puybkey_recovered, err := mycrypto.RecoverPubkeyFromPersonalSignature(payload, sig_bytes)
+	var sigParts = strings.Split(sig, "||")
+	var sigLen = len(sigParts)
+
+	calldata := struct {
+		Signature          []string `json:"signature"`
+		ContractAddress    string   `json:"contract_address"`
+		EntryPointSelector string   `json:"entry_point_selector"`
+		Calldata           []string `json:"calldata"`
+	}{
+		Signature:          []string{},
+		ContractAddress:    address_given,         // contract address is the same as the account address
+		EntryPointSelector: VALID_SIGN_ENTRYPOINT, // this is the same for the is_valid_signature method for diff addresses
+		Calldata:           []string{payload_hash, fmt.Sprint(sigLen), sigParts[0], sigParts[1]},
+	}
+
+	jsonData, err := json.Marshal(calldata)
+	// Convert the data to JSON
 	if err != nil {
-		return xerrors.Errorf("Error when extracting pubkey: %w", err.Error())
+		return xerrors.Errorf("Found invalid data in signature verification payload.")
+	}
+	// Create a buffer containing the JSON data
+	reqBody := bytes.NewBuffer(jsonData)
+	resp, err := http.Post(CALL_CONTRACT_URL, "application/json", reqBody)
+	if err != nil {
+		return xerrors.Errorf("Starknet wallet signature verification process failed. Retry.")
 	}
 
-	address_recovered := crypto.PubkeyToAddress(*puybkey_recovered)
-	if address_recovered.Hex() != address_given.Hex() {
-		return xerrors.Errorf("ETH wallet signature validation failed")
+	if resp.StatusCode != 200 {
+		return xerrors.Errorf("Starknet wallet signature validation failed")
 	}
+
 	return nil
 }
 
-func (et *Starknet) validateDelete() (err error) {
-	walletSignature, ok := et.Extra["wallet_signature"]
-	if ok && walletSignature != "" { // Validate wallet-signed signature
-		sig, err := base64.StdEncoding.DecodeString(walletSignature)
-		if err != nil {
-			return xerrors.Errorf("error when decoding wallet sig: %w", err)
-		}
-		et.Signature = sig // FIXME: is this needed to let the whole chain work?
-
-		wallet_pubkey, err := mycrypto.RecoverPubkeyFromPersonalSignature(et.GenerateSignPayload(), sig)
-		if err != nil {
-			return xerrors.Errorf("error when recovering pubkey from sig: %w", err)
-		}
-		wallet_address := crypto.PubkeyToAddress(*wallet_pubkey)
-		if common.HexToAddress(et.Identity) != wallet_address {
-			return xerrors.Errorf("not signed by this wallet: found %s instead of %s", wallet_address.Hex(), et.Identity)
-		}
-
-		return nil
+func (st *Starknet) validateDelete() (err error) {
+	walletSignature, ok := st.Extra["wallet_signature"]
+	if !ok {
+		return xerrors.Errorf("wallet signature not found")
 	}
 
-	// Vaildate persona-signed siganture
-	return mycrypto.ValidatePersonalSignature(et.GenerateSignPayload(), et.Signature, et.Pubkey)
+	if err := validateStarkSignature(walletSignature, st.SignaturePayload, st.Identity); err != nil {
+		return xerrors.Errorf("%w", err)
+	}
+
+	return err
 }

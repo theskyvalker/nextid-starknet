@@ -1,4 +1,4 @@
-module github.com/theskyvalker/nextid-starknet
+module github.com/nextdotid/proof_server
 
 go 1.18
 
@@ -164,3 +164,5 @@ require (
 	gorm.io/driver/postgres v1.3.5
 	gorm.io/gorm v1.23.4
 )
+
+replace github.com/nextdotid/proof_server-unpublished => ../proof_server
