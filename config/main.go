@@ -72,6 +72,11 @@ type DiscordPlatformConfig struct {
 	ProofServerChannelID string `json:"proof_server_channel_id"`
 }
 
+type StarknetPlatformConfig struct {
+	ContractCallURL   string `json:"contract_call_url"`
+	ValidSignEndpoint string `json:"valid_sign_endpoint"`
+}
+
 var (
 	C     *Config = new(Config)
 	Viper *viper.Viper
