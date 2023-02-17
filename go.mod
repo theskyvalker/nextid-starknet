@@ -1,4 +1,4 @@
-module github.com/nextdotid/proof_server
+module github.com/theskyvalker/nextid-starknet
 
 go 1.18
 
