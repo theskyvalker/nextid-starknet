@@ -21,9 +21,9 @@ func before_each(t *testing.T) {
 	config.Init("../../config/config.test.json")
 }
 
-const MESSAGE_HASH = "320279730965858634396468303765984608538938284205887195764322493310928683061"
+const MESSAGE_HASH = "30660353205475811940805148520873833220837533844184313747578289783623080607"
 const STARKNET_ADDRESS = "0x03bFdE4d21ae3D1B4E9571Fa89Dc99FA41E5e31a610D194538876f06165710b8"
-const WALLET_SIGNATURE = "488187255826154179061086127578568952819680137395366893545703981426270655883" + "||" + "2188625422100965913401240109321955938289053035570120614581710563892295268097"
+const WALLET_SIGNATURE = "1927568133494831781130570052215828917522841217152298943353565656320148910208" + "||" + "3310972320574110511061661032611968926599224256204377412823562425785496745834"
 
 /*
 Verification Message payload used in the test cases
@@ -39,7 +39,7 @@ Verification Message payload used in the test cases
 	    "Verification": [
 	      {
 	        "name": "uuid",
-	        "type": "string"
+	        "type": "felt"
 	      },
 	      {
 	        "name": "identity",
@@ -68,7 +68,7 @@ Verification Message payload used in the test cases
 	    "name": "Verification Message"
 	  },
 	  "message": {
-	    "uuid": "0x97cc2af1e41740f08e195898abfc9848",
+	    "uuid": "0x97cc2af1e41740f08e195898abfc9848", //remove - from the uuid string and prepend 0x to be compatible with the hash encoding
 	    "identity": "0x03bfde4d21ae3d1b4e9571fa89dc99fa41e5e31a610d194538876f06165710b8",
 	    "platform": "starknet",
 	    "createdAt": "1676694957",
