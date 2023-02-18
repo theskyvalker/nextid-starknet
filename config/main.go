@@ -32,6 +32,7 @@ type PlatformConfig struct {
 	Telegram TelegramPlatformConfig `json:"telegram"`
 	Ethereum EthereumPlatformConfig `json:"ethereum"`
 	Discord  DiscordPlatformConfig  `json:"discord"`
+	Starknet StarknetPlatformConfig `json:"starknet"`
 }
 
 type ArweaveConfig struct {

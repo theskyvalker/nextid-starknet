@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/nextdotid/proof_server/config"
 	"github.com/nextdotid/proof_server/types"
 	"github.com/nextdotid/proof_server/util"
 	"github.com/nextdotid/proof_server/validator"
@@ -24,9 +25,6 @@ const (
 	VALIDATE_TEMPLATE = `^{"starknet_address":"0x([0-9a-fA-F]{64})","signature":"(.*)"}$`
 )
 
-const VALID_SIGN_ENTRYPOINT = "0x213dfe25e2ca309c4d615a09cfc95fdb2fc7dc73fbcad12c450fe93b1f2ff9e"
-const CALL_CONTRACT_URL = "https://alpha4.starknet.io/feeder_gateway/call_contract"
-
 var (
 	l  = logrus.WithFields(logrus.Fields{"module": "validator", "validator": "starknet"})
 	re = regexp.MustCompile(VALIDATE_TEMPLATE)
@@ -42,21 +40,19 @@ func Init() {
 	}
 }
 
-// Not used by Starknet (for now).
+// Not used by Starknet.
 func (*Starknet) GeneratePostPayload() (post map[string]string) {
 	return map[string]string{"default": ""}
 }
 
 func (st *Starknet) GenerateSignPayload() (payload string) {
 	payloadStruct := validator.H{
-		"action":           string(st.Action),
-		"identity":         strings.ToLower(st.Identity),
-		"platform":         "starknet",
-		"prev":             nil,
-		"created_at":       util.TimeToTimestampString(st.CreatedAt),
-		"uuid":             st.Uuid.String(),
-		"Extra":            st.Extra,
-		"SignaturePayload": st.SignaturePayload,
+		"action":     string(st.Action),
+		"identity":   strings.ToLower(st.Identity),
+		"platform":   "starknet",
+		"prev":       nil,
+		"created_at": util.TimeToTimestampString(st.CreatedAt),
+		"uuid":       st.Uuid.String(),
 	}
 	if st.Previous != "" {
 		payloadStruct["prev"] = st.Previous
@@ -66,8 +62,11 @@ func (st *Starknet) GenerateSignPayload() (payload string) {
 		l.Warnf("Error when marshaling struct: %s", err.Error())
 		return ""
 	}
-
 	return string(payloadBytes)
+}
+
+func generateMessageHash(inpMessage string) string {
+	return inpMessage
 }
 
 // Only wallet-signed request are vaild.
@@ -97,6 +96,7 @@ func (st *Starknet) validateCreate() (err error) {
 	if !ok {
 		return xerrors.Errorf("wallet_signature not found")
 	}
+	st.SignaturePayload = generateMessageHash(st.SignaturePayload)
 
 	if err := validateStarkSignature(wallet_sig, st.SignaturePayload, st.Identity); err != nil {
 		return xerrors.Errorf("%w", err)
@@ -108,7 +108,7 @@ func (st *Starknet) validateCreate() (err error) {
 // `address` should be hexstring, `sig` should be a string of signature parts joined with || to be separated before passing as calldata
 // `payload_hash` is the pedersen hash of the payload data used to generate the signature which also includes a prefix to differentiate between
 // messages and transactions.
-func validateStarkSignature(sig string, payload_hash, address string) error {
+func validateStarkSignature(sig string, payloadHash, address string) error {
 	address_given := address
 
 	var sigParts = strings.Split(sig, "||")
@@ -121,9 +121,9 @@ func validateStarkSignature(sig string, payload_hash, address string) error {
 		Calldata           []string `json:"calldata"`
 	}{
 		Signature:          []string{},
-		ContractAddress:    address_given,         // contract address is the same as the account address
-		EntryPointSelector: VALID_SIGN_ENTRYPOINT, // this is the same for the is_valid_signature method for diff addresses
-		Calldata:           []string{payload_hash, fmt.Sprint(sigLen), sigParts[0], sigParts[1]},
+		ContractAddress:    address_given,                                // contract address is the same as the account address
+		EntryPointSelector: config.C.Platform.Starknet.ValidSignEndpoint, // this is the same for the is_valid_signature method for diff addresses
+		Calldata:           []string{payloadHash, fmt.Sprint(sigLen), sigParts[0], sigParts[1]},
 	}
 
 	jsonData, err := json.Marshal(calldata)
@@ -133,13 +133,13 @@ func validateStarkSignature(sig string, payload_hash, address string) error {
 	}
 	// Create a buffer containing the JSON data
 	reqBody := bytes.NewBuffer(jsonData)
-	resp, err := http.Post(CALL_CONTRACT_URL, "application/json", reqBody)
+	resp, err := http.Post(config.C.Platform.Starknet.ContractCallURL, "application/json", reqBody)
 	if err != nil {
 		return xerrors.Errorf("Starknet wallet signature verification process failed. Retry.")
 	}
 
 	if resp.StatusCode != 200 {
-		return xerrors.Errorf("Starknet wallet signature validation failed")
+		return xerrors.Errorf("Starknet wallet signature validation failed with error code %d", resp.StatusCode)
 	}
 
 	return nil

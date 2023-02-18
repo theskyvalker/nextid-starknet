@@ -24,7 +24,7 @@
     },
     "starknet": {
       "contract_call_url": "https://alpha4.starknet.io/feeder_gateway/call_contract",
-      "valid_sign_endppint": "0x213dfe25e2ca309c4d615a09cfc95fdb2fc7dc73fbcad12c450fe93b1f2ff9e"
+      "valid_sign_endpoint": "0x213dfe25e2ca309c4d615a09cfc95fdb2fc7dc73fbcad12c450fe93b1f2ff9e"
     }
   }
 }
