@@ -45,6 +45,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.1.0 // indirect
 	github.com/dfuse-io/logging v0.0.0-20210109005628-b97a57253f70 // indirect
 	github.com/dghubble/sling v1.4.0 // indirect
+	github.com/dontpanicdao/caigo v0.4.1 // indirect
 	github.com/everFinance/gojwk v1.0.0 // indirect
 	github.com/everFinance/ttcrsa v1.1.3 // indirect
 	github.com/fatih/color v1.13.0 // indirect

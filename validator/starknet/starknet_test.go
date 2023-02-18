@@ -21,9 +21,10 @@ func before_each(t *testing.T) {
 	config.Init("../../config/config.test.json")
 }
 
-const MESSAGE_HASH = "30660353205475811940805148520873833220837533844184313747578289783623080607"
+const EXPECTED_MESSAGE_HASH = "30660353205475811940805148520873833220837533844184313747578289783623080607"
 const STARKNET_ADDRESS = "0x03bFdE4d21ae3D1B4E9571Fa89Dc99FA41E5e31a610D194538876f06165710b8"
 const WALLET_SIGNATURE = "1927568133494831781130570052215828917522841217152298943353565656320148910208" + "||" + "3310972320574110511061661032611968926599224256204377412823562425785496745834"
+const WALLET_SIGNATURE_DELETE = "637543251093039739629931522312377085792720431642153280644631450115763029287" + "||" + "979740807347149755793574091833267855490464326275756745449051192456887578316"
 
 /*
 Verification Message payload used in the test cases
@@ -111,6 +112,7 @@ func Test_GenerateSignPayload(t *testing.T) {
 
 		stark := generate()
 		result := stark.GenerateSignPayload()
+		require.Equal(t, stark.Extra["payloadHash"], EXPECTED_MESSAGE_HASH) // checking the validity of the starknet message hash needed for sign verification
 		require.Contains(t, result, "\"identity\":\""+strings.ToLower(STARKNET_ADDRESS)+"\"")
 		require.Contains(t, result, "\"platform\":\"starknet\"")
 	})
@@ -121,7 +123,8 @@ func Test_Validate(t *testing.T) {
 		before_each(t)
 
 		stark := generate()
-		stark.SignaturePayload = MESSAGE_HASH // hash of the verification message
+		stark.GenerateSignPayload() // calling this is important to compute and store the verification message hash
+
 		require.Nil(t, stark.Validate())
 		require.Equal(t, stark.AltID, stark.Identity)
 	})
@@ -133,8 +136,8 @@ func Test_Validate(t *testing.T) {
 
 		stark := generate()
 
-		stark.SignaturePayload = MESSAGE_HASH
 		stark.Identity = "0x05dbb2ed1b75db533b7982ab8da8fede379f8d80588bfad9687a0e4caf0726c3"
+		stark.GenerateSignPayload() // calling this is important to compute and store the verification message hash
 
 		require.NotNil(t, stark.Validate())
 	})
@@ -147,7 +150,8 @@ func Test_Validate_Delete(t *testing.T) {
 
 		stark := generate()
 		stark.Action = types.Actions.Delete
-		stark.SignaturePayload = MESSAGE_HASH // hash of the verification message
+		stark.GenerateSignPayload() // calling this is important to compute and store the verification message hash
+		stark.Extra["wallet_signature"] = WALLET_SIGNATURE_DELETE
 		require.Nil(t, stark.Validate())
 	})
 
@@ -158,10 +162,8 @@ func Test_Validate_Delete(t *testing.T) {
 
 		stark := generate()
 		stark.Action = types.Actions.Delete
-		wallet_sig := "2220936504591834982582645768094644581844341042085149784265801550856083971232" + "||" + "1186901391219613604387338410509285983431530640498682227535513990575472109867"
-		stark.Extra = map[string]string{
-			"wallet_signature": wallet_sig,
-		}
+		stark.GenerateSignPayload() // calling this is important to compute and store the verification message hash
+		stark.Extra["wallet_signature"] = "2220936504591834982582645768094644581844341042085149784265801550856083971232" + "||" + "1186901391219613604387338410509285983431530640498682227535513990575472109867"
 
 		require.NotNil(t, stark.Validate())
 	})
